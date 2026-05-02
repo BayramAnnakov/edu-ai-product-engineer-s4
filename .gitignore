@@ -61,6 +61,7 @@ lesson*/dossiers/
 lesson*/deck/
 lesson*/staging/
 lesson*/*-variance-report-*.md
+lesson*/workshop*_notes*
 
 # Lessons 2-5 not aired yet — entire dirs private until each session opens.
 # Once a session airs, narrow this to per-file patterns above (matching lesson1).

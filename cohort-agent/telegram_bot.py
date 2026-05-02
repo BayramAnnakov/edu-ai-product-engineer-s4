@@ -306,6 +306,49 @@ async def react(bot, chat_id: int, message_id: int, emoji: str | None) -> None:
         logger.debug("set_message_reaction failed", exc_info=True)
 
 
+class _ReplyToBotFilter(filters.MessageFilter):
+    """Match group messages whose reply target is THIS bot.
+
+    Without this, `filters.REPLY` matches every reply in the group — including
+    Telegram's pin/forward service messages, whose reply_to_message points at
+    the pinned target, not the bot. That misfire is what made TARS chime in
+    when nothing was asked of it.
+    """
+
+    def filter(self, message) -> bool:
+        rep = getattr(message, "reply_to_message", None)
+        if rep is None:
+            return False
+        sender = getattr(rep, "from_user", None)
+        if sender is None:
+            return False
+        return getattr(sender, "username", None) == TELEGRAM_BOT_USERNAME
+
+
+_reply_to_bot = _ReplyToBotFilter()
+
+
+class _MentionsBotFilter(filters.MessageFilter):
+    """Match group messages whose text/caption contains @<bot_username>
+    as a substring (case-insensitive).
+
+    `filters.Mention(username)` relies on Telegram's server-side `mention`
+    entity, which silently drops the mention on edited messages and on
+    some multi-paragraph layouts (entity not regenerated). The bot then
+    never fires. Substring match is robust because it's purely text-based
+    and ignores Telegram's entity parser.
+    """
+
+    _needle = f"@{TELEGRAM_BOT_USERNAME}".lower()
+
+    def filter(self, message) -> bool:
+        text = (getattr(message, "text", None) or getattr(message, "caption", None) or "")
+        return self._needle in text.lower()
+
+
+_mentions_bot = _MentionsBotFilter()
+
+
 async def is_authorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Authorize a chat. Allow:
     - Cohort group itself.
@@ -579,12 +622,20 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("ping", cmd_health))
     app.add_handler(CommandHandler("ask", cmd_ask))
+    # Substring match on @<bot_username> instead of the entity-based
+    # `filters.Mention()`. Telegram's server-side `mention` entity drops on
+    # some edited / multi-paragraph messages, leaving the bot silent — past
+    # incidents: 2026-05-02 13:53, 2026-05-02 16:24.
     app.add_handler(MessageHandler(
-        filters.Mention(TELEGRAM_BOT_USERNAME) & filters.ChatType.GROUPS,
+        _mentions_bot & filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
         handle_query,
     ))
+    # Reply-to-bot continues the thread. Must be a reply to OUR bot specifically;
+    # plain `filters.REPLY` matches every reply in the group, including pin/forward
+    # service messages whose `reply_to_message` points at the pinned target — those
+    # spuriously woke handle_query and made TARS post "Mention me with a question".
     app.add_handler(MessageHandler(
-        filters.REPLY & filters.ChatType.GROUPS,
+        _reply_to_bot & filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
         handle_query,
     ))
     # Private DMs from a verified cohort member. Match text, captions, and
