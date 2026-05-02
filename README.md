@@ -16,25 +16,14 @@
 | 4 | Jun 13 | Multi-agent + Eval + **Harness Swap** | Evals + autoresearch + ship in a stranger's harness |
 | 5 | Jun 27 | Voice + Production | Voice layer + live-streamed Demo Day |
 
+## What's in this repo
 
-## Folder Structure
-
-```
-edu-ai-product-engineer-s4/
-├── README.md                       (you are here)
-├── cohort-4-design.md              (full session-by-session design)
-├── council-cohort-4-design.md      (multi-perspective design brainstorm + revisions)
-├── lesson1/                        (Day One: Context Engineering)
-├── lesson2/                        (First PR Review: Skill + Harness)
-├── lesson3/                        (First On-Call: Tool / MCP)
-├── lesson4/                        (The Swap: Multi-agent + Eval)
-├── lesson5/                        (Demo Day: Voice + Production)
-├── instructor/                     (facilitator-only materials)
-├── forks/                          (student work — added during the cohort)
-└── case_studies/                   (cohort-4-rules dataset, alumni colleague repos)
-```
+- `cohort-agent/` — **TARS**, the cohort's live AI assistant. Telegram bot on Anthropic Managed Agents. Built and grown live across all 5 sessions; `git log cohort-agent/` *is* the curriculum.
+- `lesson1/block2-stochasticity-demo/` — the Block 2 stochasticity demo (Lesson 1). Clone this repo, `cd cohort-agent`, run the demo prompt.
+- `CLAUDE.md` — working notes for the cohort.
 
 ## Cross-Session Threads
 
-- **Persistent Cohort Agent** — fed every transcript, CLAUDE.md, error from the cohort
+- **Persistent Cohort Agent (TARS)** — fed every transcript, CLAUDE.md, error from the cohort
 - **Cohort Error-to-Rule Dataset** — published as `cohort-4-rules` package by S5
+- **Retrieval Quiz** — 10 min at start of every session (no Claude open)
