@@ -2,6 +2,8 @@
 
 Telegram bot the cohort talks to. Anthropic Managed Agents (Opus 4.7 + memory stores) on fly.io. **Live in production** with ~20 students in `edu-ai-product-engineer-s4` Telegram group.
 
+`AGENTS.md` is a symlink to this file — Codex / Cursor / Gemini / JetBrains agents read the same rules as Claude Code. One source of truth.
+
 **Two different "rules" files in this repo — do not confuse them.**
 
 - `memory_seeds/00-constitution.md` is TARS's runtime system prompt. Shapes what TARS *says* to students. Synced to the agent's `instructions` field by `provision.py`.
