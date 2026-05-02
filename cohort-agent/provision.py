@@ -132,16 +132,47 @@ def find_or_create_store(
     return created.id
 
 
+import fnmatch
+
+# Defense in depth: even if an instructor-only file lands in memory_seeds/,
+# don't upload it to TARS's knowledge store. Mirrors the .gitignore intent —
+# students get the constitution + roster + dossiers (post-airing) + transcripts.
+# They DO NOT get lesson designs, rubrics, pre-class prep, or instructor notes.
+INSTRUCTOR_ONLY_PATTERNS = (
+    "**/*-design.md",
+    "**/*-rubric.md",
+    "**/pre-class*",
+    "**/*tensions*",
+    "**/instructor/**",
+    "**/run-sheet*",
+    "**/handouts*",
+    "**/slide-deck-outline*",
+)
+
+
+def _is_instructor_only(rel_path: str) -> bool:
+    return any(fnmatch.fnmatch(rel_path, p) for p in INSTRUCTOR_ONLY_PATTERNS)
+
+
 def collect_knowledge_seeds() -> dict[str, str]:
-    """Walk memory_seeds/ except 00-constitution.md (it's the system prompt)."""
+    """Walk memory_seeds/ except 00-constitution.md (system prompt) and any
+    instructor-only paths (see INSTRUCTOR_ONLY_PATTERNS)."""
     out: dict[str, str] = {}
     if not SEEDS_DIR.exists():
         return out
+    skipped: list[str] = []
     for f in SEEDS_DIR.rglob("*.md"):
         if f.name == "00-constitution.md":
             continue
         rel = f.relative_to(SEEDS_DIR).as_posix()
+        if _is_instructor_only(rel):
+            skipped.append(rel)
+            continue
         out[f"/{rel}"] = f.read_text(encoding="utf-8")
+    if skipped:
+        print(f"[knowledge] skipped {len(skipped)} instructor-only file(s):")
+        for s in skipped:
+            print(f"  - {s}")
     return out
 
 

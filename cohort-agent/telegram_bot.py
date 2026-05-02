@@ -32,6 +32,7 @@ from telegram.ext import (
 )
 
 from digest import run_daily_job
+import working_memory
 
 logging.basicConfig(
     level=logging.INFO,
@@ -126,6 +127,8 @@ async def query_tars(
     *,
     allow_learnings: bool = True,
     image_blocks: list[dict] | None = None,
+    chat_id: int | None = None,
+    trigger_msg_id: int | None = None,
 ) -> str:
     """Run one Managed-Agent session against the cohort agent.
 
@@ -135,6 +138,10 @@ async def query_tars(
 
     image_blocks: optional list of Anthropic image content blocks to include
     alongside the text prompt (for photos/screenshots/image-mime documents).
+
+    chat_id / trigger_msg_id: when set, working memory (last ~30 msgs in this
+    chat + reply chain to the trigger) is prepended to the prompt as a
+    <recent_chat> block. Only set for the cohort group; DMs stay private.
     """
     if not (AGENT_ID and ENV_ID):
         return ("TARS not provisioned. Bayram needs to run `python provision.py` "
@@ -145,7 +152,20 @@ async def query_tars(
         resources = build_resources()
         if not allow_learnings:
             resources = [r for r in resources if r.get("memory_store_id") != LEARNINGS_ID]
-        prefixed_prompt = f"{today_context()}\n\n{prompt}" if prompt else today_context()
+        recent_block = ""
+        if chat_id is not None:
+            try:
+                recent_block = working_memory.render_block(
+                    chat_id, trigger_msg_id=trigger_msg_id,
+                )
+            except Exception:
+                logger.exception("working_memory.render_block failed")
+        parts = [today_context()]
+        if recent_block:
+            parts.append(recent_block)
+        if prompt:
+            parts.append(prompt)
+        prefixed_prompt = "\n\n".join(parts)
         content: list[dict] = []
         if image_blocks:
             content.extend(image_blocks)
@@ -352,11 +372,16 @@ async def handle_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     _recent_queries.append(time.monotonic())
     t0 = time.monotonic()
     error: str | None = None
+    # Working memory only injected for cohort-group queries. DMs stay isolated.
+    wm_chat_id = msg.chat_id if not is_dm else None
+    wm_trigger_id = msg.message_id if not is_dm else None
     try:
         response = await query_tars(
             prompt, title,
             allow_learnings=not is_dm,
             image_blocks=image_blocks or None,
+            chat_id=wm_chat_id,
+            trigger_msg_id=wm_trigger_id,
         )
     except Exception as exc:
         logger.exception("query_tars failed")
@@ -485,16 +510,18 @@ async def passive_log(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> No
     if not text and not attachments:
         # Skip pure service messages (joins, leaves, etc.)
         return
+    msg_ts = msg.date or datetime.now(timezone.utc)
+    reply_to_id = msg.reply_to_message.message_id if msg.reply_to_message else None
     try:
         record = {
-            "ts": (msg.date or datetime.now(timezone.utc)).isoformat(),
+            "ts": msg_ts.isoformat(),
             "msg_id": msg.message_id,
             "user_id": user.id,
             "username": user.username,
             "first_name": user.first_name,
             "text": text,
             "attachments": attachments,
-            "reply_to": msg.reply_to_message.message_id if msg.reply_to_message else None,
+            "reply_to": reply_to_id,
             "forward_from": (
                 msg.forward_origin.type.value if msg.forward_origin else None
             ),
@@ -506,16 +533,44 @@ async def passive_log(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> No
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         logger.exception("passive_log failed")
+    # Dual-write into working-memory SQLite. Annotate text-less messages with
+    # an attachment tag so the rolling window still surfaces "Igor sent a
+    # screenshot" instead of silently dropping it.
+    wm_text = text or f"[{', '.join(attachments)}]" if attachments else text
+    if not wm_text:
+        return
+    try:
+        working_memory.record_message(
+            chat_id=chat.id,
+            msg_id=msg.message_id,
+            ts=msg_ts,
+            user_id=user.id,
+            user_name=user.username or user.first_name,
+            text=wm_text,
+            reply_to=reply_to_id,
+        )
+    except Exception:
+        logger.exception("working_memory.record_message failed")
 
 
 def main() -> None:
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Group-level passive logger runs FIRST (group=-1) on every text message
-    # in the cohort group. Doesn't reply, just appends to /data/.
+    # Initialize working-memory SQLite up front so the first message doesn't
+    # race the table creation.
+    try:
+        working_memory.init_db()
+    except Exception:
+        logger.exception("working_memory.init_db failed")
+
+    # Group-level passive logger runs FIRST (group=-1) on every text-bearing
+    # message in the cohort group. Captions on photos/docs are kept; pure
+    # media without caption is dropped (working memory needs text to be
+    # useful). Doesn't reply, just persists to /data/.
     app.add_handler(
         MessageHandler(
-            filters.TEXT & filters.Chat(COHORT_GROUP_CHAT_ID) & ~filters.COMMAND,
+            (filters.TEXT | filters.CAPTION)
+            & filters.Chat(COHORT_GROUP_CHAT_ID) & ~filters.COMMAND,
             passive_log,
         ),
         group=-1,

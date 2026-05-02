@@ -219,7 +219,7 @@ In Block 1's contract, Bayram mentions explicitly:
 
 > *"TARS sees every message in this group and digests them daily into `/digests/`. Querying TARS later about "what happened in week 3" will reach those digests. If you don't want something logged — DM me, and I'll delete it. Default: assume everything in the cohort group becomes part of the cohort's collective memory."*
 
-Add to `lesson1/lesson-1-design.md` Block 1 (60-sec mention).
+Disclosed live in S1's opening contract (60-sec mention) before students start asking questions.
 
 The Telegram group is invite-only (Bayram is owner, Madina is admin), so this is consent-by-context: members joined for a class with explicit AI tooling, and the disclosure makes the loop visible.
 

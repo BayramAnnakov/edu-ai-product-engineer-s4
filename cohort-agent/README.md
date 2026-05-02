@@ -97,15 +97,12 @@ cohort-agent/
 ├── requirements.txt
 ├── .env.example
 ├── memory_seeds/
-│   ├── 00-constitution.md          (TARS system prompt; NOT synced to memory store)
-│   ├── team/cohort-roster.md
-│   ├── lessons/lesson-1-design.md
-│   ├── dossiers/01-bug-investigation.md
-│   ├── dossiers/02-pr-review.md
-│   └── transcripts/                (populated post-session)
-└── skills/
-    ├── cohort-search/SKILL.md      (default retrieval procedure)
-    └── dossier-creator/SKILL.md    (homework helper, released to students)
+│   ├── 00-constitution.md          (TARS system prompt; NOT uploaded — set as agent instructions)
+│   ├── team/                       (cohort roster — gitignored, instructor-private)
+│   ├── lessons/                    (per-session design docs — gitignored, instructor-private)
+│   ├── dossiers/                   (planted forensics dossiers — gitignored until session airs)
+│   └── transcripts/                (populated post-session — gitignored, may contain PII)
+└── (skills/ — not yet wired; drafts staged in `../lesson2/staging/skills/` until S2)
 ```
 
 ---

@@ -146,7 +146,7 @@ In the cohort Telegram group, post:
 
 Expected:
 - Within ~5 sec, bot reacts (typing indicator).
-- Within ~15-30 sec, bot replies with 3 bullets, each with a citation like `(see: /lessons/lesson-1-design.md)`.
+- Within ~15-30 sec, bot replies with grounded content + a citation to a seed path (e.g., `(see: /team/cohort-roster.md)`).
 
 Other smoke tests:
 ```
@@ -164,17 +164,15 @@ Other smoke tests:
 
 ---
 
-## Step 7 — Block 8 demo dry-run (5 min)
+## Step 7 — Live demo dry-run (5 min)
 
-Before Lesson 1 starts, run the actual Block 8 query yourself to confirm latency + grounding:
+Before Lesson 1 starts, run the actual demo query yourself to confirm latency + grounding:
 
 ```
-@edu_aipe_s4_tars_bot what was the verification-section beat in Block 5?
+@edu_aipe_s4_tars_bot what's your discretion setting?
 ```
 
-Expected response time: 5-15 sec. Expected response shape:
-
-> *"In Block 5 forensics, the verification-section beat is the patch coached onto every dossier — 'what test, screenshot, or output would prove this is done?' Anthropic confirms verification is the single highest-leverage move. (see: /lessons/lesson-1-design.md)"*
+Expected response time: 5-15 sec. Expected shape: a terse answer that pulls the value from `00-constitution.md` and cites it (e.g., `(see: 00-constitution.md)`).
 
 If the response is slow (>30 sec) or thin, increase `QUERY_TIMEOUT_SEC` in `telegram_bot.py` and re-deploy.
 

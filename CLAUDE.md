@@ -2,7 +2,7 @@
 
 May 2 → Jun 27, 2026. 5 × 2h biweekly. ~20 mid+ devs.
 
-Anchor: **Build Your AI Coding Colleague.** See `cohort-4-design.md`.
+Anchor: **Build Your AI Coding Colleague.** See the cohort design doc (private to instructor).
 
 ## TARS is the canonical demo project for the entire course
 
@@ -26,11 +26,10 @@ When designing demos, dry-runs, or exercises:
 
 ## What lives where
 
-- `cohort-4-design.md` — top-level design (master frame, pass contract, session matrix)
-- `cohort-agent/` — TARS source (deployed to fly.io). Constitution at `00-constitution.md`. Persona = TARS from Interstellar (Honesty 90, Humor 30).
-- `lesson1/`–`lesson5/` — per-session design docs, slide outlines, handouts, dossiers, demo scaffolds
-- `instructor/` — Bayram's prep (rubrics, fluency exam, retrieval quizzes)
+- `cohort-agent/` — TARS source (deployed to fly.io). Constitution at `00-constitution.md`. Persona = TARS from Interstellar.
+- `lesson{1..5}/` — per-session materials. Public artifacts (handouts, public block READMEs) ship; design docs / dossiers / run-sheets are gitignored as instructor-only.
 - `case_studies/` — guest-week material
+- `forks/` — student forks (cohort-agent variants)
 
 ## Conventions
 
