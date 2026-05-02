@@ -8,10 +8,30 @@ The architecture is **Constitution + runtime = colleague**. You'll write the Con
 
 ## Pre-flight (do this BEFORE Block 7.5 starts)
 
-Pick one runtime. You only need ONE of these working:
+Pick one runtime. **Python is the recommended path** — it's been validated end-to-end with a clean API-key auth path (~27s run, no extra setup). The Codex path requires a ChatGPT Pro/Plus subscription with `codex login` already done; an `OPENAI_API_KEY` alone will NOT work (silent 401).
 
-- **Python (Claude Agent SDK)** — `pip install claude-agent-sdk` and `export ANTHROPIC_API_KEY=sk-ant-...`
-- **JS (Codex SDK)** — `npm i @openai/codex-sdk` and `codex login` (ChatGPT Pro / Plus subscription)
+- **Python (Claude Agent SDK)** — recommended:
+  ```bash
+  python3 -m venv venv && source venv/bin/activate    # required on modern macOS/Ubuntu (PEP 668)
+  pip install claude-agent-sdk
+  export ANTHROPIC_API_KEY=sk-ant-...                  # OR have Claude Code CLI installed and authed
+  ```
+- **JS (Codex SDK)** — only if you already have ChatGPT Pro/Plus + `codex login` configured:
+  ```bash
+  npm i @openai/codex-sdk
+  codex login    # ChatGPT Pro/Plus subscription auth — OPENAI_API_KEY does NOT work
+  ```
+
+**60-second self-check before class:**
+```bash
+# Python path:
+claude --version || echo "no Claude CLI — you'll need ANTHROPIC_API_KEY"
+echo "${ANTHROPIC_API_KEY:0:8}" || echo "no API key set"
+# At least ONE of these must work or Phase 3 will fail.
+
+# Codex path:
+codex --version && cat ~/.codex/auth.json >/dev/null 2>&1 && echo "codex authed" || echo "run codex login first"
+```
 
 Have ready (mentally — write them down on paper if it helps):
 - Your AI assistant of choice running (Claude Code, Codex CLI, Cursor, JetBrains AI, or anything that reads `CLAUDE.md`/`AGENTS.md`)
@@ -75,7 +95,7 @@ Read what your AI wrote. Change **one** rule (or delete one that's still too gen
 
 Pick your runtime. Copy-paste-run.
 
-**Python:**
+**Python (recommended):**
 
 ```python
 # runner.py
@@ -93,6 +113,7 @@ asyncio.run(main())
 ```
 
 ```bash
+# In your venv (created in Pre-flight). Validated end-to-end: ~27s clean run.
 python runner.py
 ```
 
@@ -164,14 +185,20 @@ Drop the example task input into Phase 3's `<EXAMPLE INPUT>` slot. You can paste
 
 ## Troubleshooting (Madina + Sasha pinned in cohort chat during Block 7.5)
 
-- **`ModuleNotFoundError: claude_agent_sdk`** → `pip install claude-agent-sdk` (uppercase Python pkg, lowercase import).
-- **`401 unauthorized`** → `export ANTHROPIC_API_KEY=sk-ant-...` for Python. For JS: `codex login` and confirm subscription is active.
-- **Codex SDK requires git repo** → `git init && git commit --allow-empty -m init` in the directory.
-- **Python <3.10** → `claude-agent-sdk` requires 3.10+. If stuck on 3.9, switch to JS path.
+- **`error: externally-managed-environment` on `pip install`** → you're on system Python (PEP 668). Run `python3 -m venv venv && source venv/bin/activate` first, then retry.
+- **`ModuleNotFoundError: claude_agent_sdk`** → `pip install claude-agent-sdk` (uppercase Python pkg, lowercase import). Make sure you're in the venv (`which python` should show `…/venv/bin/python`).
+- **`claude: command not found` or the SDK silently hangs** → the Python SDK needs EITHER Claude Code CLI installed (so it can auto-discover subscription auth) OR `ANTHROPIC_API_KEY` set in env. Pick one. Check with: `claude --version || echo "${ANTHROPIC_API_KEY:0:8}"`.
+- **`401 unauthorized` (Python)** → `export ANTHROPIC_API_KEY=sk-ant-...` and re-run.
+- **`401 unauthorized` (JS / Codex)** → Codex SDK does NOT accept `OPENAI_API_KEY`. It requires `codex login` (ChatGPT Pro/Plus subscription auth stored in `~/.codex/`). If you don't have a ChatGPT subscription, switch to the Python path.
+- **Codex SDK: `not in a git repo`** → `git init && git commit --allow-empty -m init` in the directory.
+- **Python <3.10** → `claude-agent-sdk` requires 3.10+. Check `python3 --version`. If stuck on 3.9, install a newer Python or switch to JS path.
 - **No output, just hangs** → check `CLAUDE.md` is in the SAME directory you're running from. The SDK reads `./CLAUDE.md` not `~/.claude/CLAUDE.md`.
-- **Output is just generic LLM chatter** → your Constitution is too vague. Re-run Phase 1 with a more specific verifier.
+- **Output is just generic LLM chatter** → your Constitution is too vague. Re-run Phase 1 with a more specific verifier and incidents that aren't sanitized.
+- **`warn: CPU lacks AVX support`** → harmless Bun warning, ignore.
 
 If at the 4-min mark you're not running yet: **post your one-sentence task to the cohort chat** instead. TARS captures it; you finish during the break with Madina async. The lesson lands either way — the colleague greeting is just the visible artifact.
+
+Cost note: a single SDK call is ~$0.05-0.10 on Sonnet 4.6 + Haiku 4.5 on the API. Trivial for one-offs; relevant if you leave a loop running.
 
 ---
 
