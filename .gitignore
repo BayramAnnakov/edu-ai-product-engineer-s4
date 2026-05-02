@@ -47,6 +47,7 @@ council-*.md
 lesson1/lesson-1-design.md
 lesson1/slide-deck-outline.md
 lesson1/handouts.md
+lesson1/run-sheet.md
 lesson1/dossiers/
 lesson1/deck/
 lesson1/block2-stochasticity-demo/variance-report-*.md
@@ -55,6 +56,7 @@ lesson1/block2-stochasticity-demo/variance-report-*.md
 lesson*/lesson-*-design.md
 lesson*/slide-deck-outline.md
 lesson*/handouts.md
+lesson*/run-sheet.md
 lesson*/dossiers/
 lesson*/deck/
 lesson*/*-variance-report-*.md
