@@ -1,0 +1,33 @@
+app = "edu-aipe-s4-tars"
+primary_region = "sjc"
+
+[build]
+
+[env]
+  TELEGRAM_BOT_USERNAME = "edu_aipe_s4_tars_bot"
+  COHORT_GROUP_CHAT_ID = "-1003721817564"
+  TELEGRAM_WEBHOOK_URL = "https://edu-aipe-s4-tars.fly.dev/webhook"
+  DAILY_API_BUDGET_USD = "10.0"
+  MAX_QUERIES_PER_HOUR = "30"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+  # No HTTP /health endpoint — python-telegram-bot's webhook server only
+  # serves the webhook path. fly's TCP check on port 8080 is sufficient.
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[mounts]
+  source = "tars_data"
+  destination = "/data"

@@ -1,0 +1,74 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Node
+node_modules/
+package-lock.json
+
+# Secrets (we ship .env.example, NEVER .env)
+.env
+.env.local
+*.secret
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Slide builds — keep .pptx out, render byproducts always out
+lesson*/deck/preview/
+lesson*/deck/*.pdf
+~$*.pptx
+.~lock.*
+
+# ─── INSTRUCTOR-ONLY (do NOT publish) ──────────────────────────
+# Anything in this section is Bayram's pre-class playbook. Students
+# get the Constitution + bot source + skills + the public Block 2
+# README; they DON'T get the lesson plan, the planted-bug dossiers,
+# the cohort roster, or the slide-deck source.
+
+# Council / strategy docs
+council-*.md
+
+# Per-lesson instructor materials
+lesson1/lesson-1-design.md
+lesson1/slide-deck-outline.md
+lesson1/handouts.md
+lesson1/dossiers/
+lesson1/deck/
+lesson1/block2-stochasticity-demo/variance-report-*.md
+
+# When future lessons land, mirror the same pattern
+lesson*/lesson-*-design.md
+lesson*/slide-deck-outline.md
+lesson*/handouts.md
+lesson*/dossiers/
+lesson*/deck/
+lesson*/*-variance-report-*.md
+
+# Empty/private instructor folder
+instructor/
+
+# TARS memory seeds: 00-constitution.md is public (it IS TARS's
+# system prompt — students should be able to read it). The rest
+# (cohort roster, lesson designs, planted dossiers) is private.
+cohort-agent/memory_seeds/team/
+cohort-agent/memory_seeds/lessons/
+cohort-agent/memory_seeds/dossiers/
+
+# Local TARS data
+cohort-agent/data/
+/tmp/
