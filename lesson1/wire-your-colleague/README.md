@@ -13,20 +13,25 @@ Pick one runtime. You only need ONE of these working:
 - **Python (Claude Agent SDK)** — `pip install claude-agent-sdk` and `export ANTHROPIC_API_KEY=sk-ant-...`
 - **JS (Codex SDK)** — `npm i @openai/codex-sdk` and `codex login` (ChatGPT Pro / Plus subscription)
 
-Have ready:
+Have ready (mentally — write them down on paper if it helps):
 - Your AI assistant of choice running (Claude Code, Codex CLI, Cursor, JetBrains AI, or anything that reads `CLAUDE.md`/`AGENTS.md`)
 - One sentence describing the recurring coding task you want a colleague to take over
 - One sentence describing what would prove the colleague did it right (the "verifier")
+- **2 specific past incidents** — actual times you did this task by hand. What was annoying? What would have helped? 1-2 sentences each. Don't sanitize them.
 
-If you don't have a task in mind, pick one from the [fallback tasks](#fallback-tasks-pick-one) at the bottom.
+The incidents are the most important input. The dossier framework says: *rules derive from constraints, not from imagination*. Without incidents, your AI generates a generic Constitution; with them, every rule is grounded in a real failure you've already lived through.
+
+If you don't have a task in mind, pick one from the [fallback tasks](#fallback-tasks-pick-one) at the bottom — each comes with 2 example incidents you can use.
 
 ---
 
 ## The exercise
 
-### Phase 1 — Generate your Constitution (90 sec)
+### Phase 1 — Generate your Constitution (2 min)
 
-Open your AI assistant. Paste this exact prompt (replace the two bracketed lines):
+The single most important move in the dossier framework: **rules derive from incidents, not from imagination.** Generic prompts produce generic Constitutions. So before asking your AI to write rules, you tell it about 2 actual times you did the task by hand and what was annoying. The rules write themselves.
+
+Open your AI assistant. Paste this exact prompt (replace the four bracketed lines):
 
 ```
 Read this dossier as a shape reference:
@@ -34,12 +39,19 @@ https://github.com/BayramAnnakov/edu-ai-product-engineer-s4/blob/master/cohort-a
 
 My recurring task: [ONE SENTENCE]
 My verifier (what proves the colleague did it right): [ONE SENTENCE]
+Last 2 times I did this manually:
+  1. [INCIDENT — 1-2 sentences: what happened, what was annoying, what I wish I'd had]
+  2. [INCIDENT — 1-2 sentences]
 
-Generate a starter colleague Constitution as a Markdown file with:
+Generate a starter colleague Constitution as a Markdown file. Hard requirement:
+EACH rule must trace back to ONE of the incidents above. If a rule doesn't fix
+something I described, don't include it. Better 3 grounded rules than 7 generic ones.
+
+Structure:
 - Persona settings (honesty %, brevity expectation)
 - Voice rules (terse / formal / language-matched / etc.)
-- 3-5 rules SPECIFIC to my task (not generic "be helpful")
-- A "what NOT to do" section with at least 3 entries
+- 3-5 incident-grounded rules
+- A "what NOT to do" section
 - An "Identity" section (only when asked)
 
 Output the file content only. No commentary. I'll save it as ./CLAUDE.md.
@@ -55,9 +67,9 @@ ln -s CLAUDE.md AGENTS.md
 
 Now Codex / Cursor / Gemini / JetBrains read the same Constitution as Claude Code.
 
-### Phase 2 — Tweak (60 sec)
+### Phase 2 — Tweak (30 sec)
 
-Read what your AI wrote. Change **one** rule. Add a personal opinion, tighten a hedge, raise the honesty %, whatever. Make it yours. Don't over-think — you have 60 seconds.
+Read what your AI wrote. Change **one** rule (or delete one that's still too generic). Trust your gut. Don't over-think.
 
 ### Phase 3 — Run (90 sec)
 
@@ -111,10 +123,12 @@ Copy the first sentence of your colleague's response. Paste into the cohort grou
 
 ## What you should have after 5 min
 
-- `./CLAUDE.md` — your starter Constitution (3-5 task-specific rules)
+- `./CLAUDE.md` — your starter Constitution (3-5 incident-grounded rules)
 - `./AGENTS.md` — symlink to the same file
 - `runner.py` or `runner.mjs` — 4-line SDK invocation
 - One real output from your colleague, posted to the cohort chat
+
+Each rule in your CLAUDE.md should trace back to a specific past incident. Open the file and do this audit: read each rule, ask *"which incident does this fix?"* — if you can't answer in one sentence, the rule is too generic and you should rewrite or delete it.
 
 This is the architecture. Everything S2-S5 adds (skills, hooks, MCPs, evals, voice) layers on this same shape. **You shipped the colleague's first version today.**
 
@@ -122,15 +136,29 @@ This is the architecture. Everything S2-S5 adds (skills, hooks, MCPs, evals, voi
 
 ## Fallback tasks (pick one if you don't have a task in mind)
 
-These are the universal-domain colleague targets — pick the one closest to your actual day:
+Each comes with 2 example incidents you can paste into Phase 1 verbatim — but your real task and incidents will produce a richer Constitution.
 
-1. **PR review.** Read a diff, flag the things you'd flag in a code review (style violations, missing tests, security smells, scope creep).
-2. **Bug investigation.** Read a stack trace + recent commits, propose the 3 most likely root causes ranked by evidence.
-3. **Log triage.** Read a 200-line server log, surface the 3 anomalies that would page on-call.
-4. **Customer email triage.** Read 10 support emails, classify by urgency (P0/P1/P2) and route by domain (billing / auth / data / feature-request).
-5. **Design QA.** Read a Figma description (or one paragraph of design intent), flag the accessibility issues and the 3 weakest UX choices.
+1. **PR review.** *Task:* Read a diff and flag the things you'd flag in a senior code review.
+   - Incident 1: Reviewed a 400-line PR at 5pm; missed a SQL injection because I was tired, caught it in production 3 days later.
+   - Incident 2: Approved a refactor that quietly changed the public API contract; broke 4 downstream services next morning.
 
-Drop the example input into Phase 3's `<EXAMPLE INPUT>` slot. You can paste raw text — the colleague is just an LLM with a Constitution.
+2. **Bug investigation.** *Task:* Read a stack trace + recent commits and propose 3 ranked root causes.
+   - Incident 1: Spent 90 min on a NullPointerException that turned out to be one commit ago — would have caught it in 5 min if I'd diffed first.
+   - Incident 2: Investigated "intermittent" auth failures for two days; was a clock skew between two servers no one mentioned.
+
+3. **Log triage.** *Task:* Read 200 lines of server log and surface the 3 anomalies that would page on-call.
+   - Incident 1: Missed a slow-burn memory leak (20-min increments over 6 hours) because I scrolled to the bottom and only read errors.
+   - Incident 2: Paged the team for "auth failures" that turned out to be one specific bot client; should have rate-grouped by IP first.
+
+4. **Customer email triage.** *Task:* Read 10 support emails, classify P0/P1/P2 and route by domain.
+   - Incident 1: Marked a "billing question" as P2; turned out to be a payment-processor outage affecting 200 users.
+   - Incident 2: Routed a security report to the data team; sat 3 days in someone's inbox before getting to security.
+
+5. **Design QA.** *Task:* Read a design description and flag accessibility + the weakest UX choices.
+   - Incident 1: Reviewed a checkout flow; missed that primary CTA had 2.4:1 contrast — failed WCAG AA — until QA caught it.
+   - Incident 2: Approved a notification pattern that we'd already deprecated three sprints earlier; team had to re-do the work.
+
+Drop the example task input into Phase 3's `<EXAMPLE INPUT>` slot. You can paste raw text — the colleague is just an LLM with a Constitution.
 
 ---
 
