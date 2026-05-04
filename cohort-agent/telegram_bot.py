@@ -31,7 +31,14 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes, filters,
 )
 
-from digest import run_daily_job
+from digest import (
+    run_daily_job,
+    run_weekly_retro_draft_job,
+    load_pending_retro,
+    archive_published_retro,
+    PENDING_RETRO_PATH,
+)
+from tg_format import markdown_to_telegram_html
 import working_memory
 
 logging.basicConfig(
@@ -53,15 +60,20 @@ KNOWLEDGE_ID = os.environ.get("COHORT_KNOWLEDGE_STORE_ID", "").strip()
 LEARNINGS_ID = os.environ.get("COHORT_LEARNINGS_STORE_ID", "").strip()
 
 QUERY_TIMEOUT_SEC = 120
-MAX_PER_HOUR = int(os.environ.get("MAX_QUERIES_PER_HOUR", "30"))
+# Per-user cap. Replaces an earlier global cap; a single fast-firing student
+# could otherwise starve the whole cohort. Env var name kept for back-compat
+# but semantics changed: this is now per-user-per-hour.
+MAX_PER_USER_PER_HOUR = int(os.environ.get("MAX_QUERIES_PER_HOUR", "10"))
 MEMBER_CACHE_TTL_SEC = 300  # cache getChatMember results for 5 min
 
 DATA_DIR = Path(os.environ.get("TARS_DATA_DIR", "/data"))
 DIGEST_TIMEZONE = ZoneInfo("America/Los_Angeles")
 DIGEST_HOUR = 23  # 23:00 Pacific
+RETRO_DRAFT_HOUR = 9  # 09:00 Pacific — TARS DMs draft to owner; owner publishes manually
+RETRO_WEEKDAY = 6  # Sunday in python-telegram-bot (Mon=0..Sun=6)
 
 _anthropic: Anthropic | None = None
-_recent_queries: deque[float] = deque(maxlen=MAX_PER_HOUR + 10)
+_recent_queries: dict[int, deque[float]] = {}
 _member_cache: dict[int, tuple[bool, float]] = {}  # user_id -> (is_member, fetched_at)
 ALLOWED_STATUSES = {"creator", "administrator", "member", "restricted"}
 
@@ -73,12 +85,24 @@ def anthropic_client() -> Anthropic:
     return _anthropic
 
 
-def rate_limited() -> bool:
-    now = time.monotonic()
-    cutoff = now - 3600
-    while _recent_queries and _recent_queries[0] < cutoff:
-        _recent_queries.popleft()
-    return len(_recent_queries) >= MAX_PER_HOUR
+def rate_limited(user_id: int) -> bool:
+    """Per-user 1h sliding window. Each user gets their own bucket so a single
+    fast-firing student can't starve the cohort."""
+    cutoff = time.monotonic() - 3600
+    q = _recent_queries.get(user_id)
+    if q is None:
+        return False
+    while q and q[0] < cutoff:
+        q.popleft()
+    return len(q) >= MAX_PER_USER_PER_HOUR
+
+
+def record_query(user_id: int) -> None:
+    q = _recent_queries.get(user_id)
+    if q is None:
+        q = deque(maxlen=MAX_PER_USER_PER_HOUR + 10)
+        _recent_queries[user_id] = q
+    q.append(time.monotonic())
 
 
 def build_resources() -> list[dict]:
@@ -294,6 +318,56 @@ async def fetch_image_blocks(bot, msg) -> list[dict]:
     return blocks
 
 
+def _persist_outbound(sent_msg, body: str, *, reply_to_id: int | None) -> None:
+    """Log TARS's own reply to JSONL + working memory.
+    Cohort-group only — DM replies stay private (Constitution: discretion 100).
+    Telegram does NOT echo bot-sent messages back via webhook, so passive_log
+    never sees these. Without this call the daily digest sees questions but not
+    answers, and TARS's own working-memory window forgets what it just said.
+    """
+    if sent_msg is None:
+        return
+    try:
+        chat_id = sent_msg.chat_id
+    except Exception:
+        return
+    if chat_id != COHORT_GROUP_CHAT_ID:
+        return
+    ts = sent_msg.date or datetime.now(timezone.utc)
+    text_body = body or "(empty response)"
+    record = {
+        "ts": ts.isoformat(),
+        "msg_id": sent_msg.message_id,
+        "user_id": 0,  # synthetic — TARS isn't a real Telegram user_id
+        "username": TELEGRAM_BOT_USERNAME,
+        "first_name": "TARS",
+        "text": text_body,
+        "attachments": [],
+        "reply_to": reply_to_id,
+        "forward_from": None,
+    }
+    try:
+        DATA_DIR.mkdir(exist_ok=True, parents=True)
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        path = DATA_DIR / f"messages-{date_str}.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        logger.exception("_persist_outbound jsonl failed")
+    try:
+        working_memory.record_message(
+            chat_id=chat_id,
+            msg_id=sent_msg.message_id,
+            ts=ts,
+            user_id=0,
+            user_name="TARS",
+            text=text_body,
+            reply_to=reply_to_id,
+        )
+    except Exception:
+        logger.exception("_persist_outbound working_memory failed")
+
+
 async def react(bot, chat_id: int, message_id: int, emoji: str | None) -> None:
     """Set (or clear, if emoji=None) a reaction on a message. Errors are silent."""
     try:
@@ -373,8 +447,11 @@ async def handle_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user = update.effective_user
     if msg is None or user is None:
         return
-    if rate_limited():
-        await msg.reply_text("Hourly query limit hit. Cooling down.")
+    if rate_limited(user.id):
+        await msg.reply_text(
+            f"You've hit the hourly cap ({MAX_PER_USER_PER_HOUR}/h per user). "
+            "Cooling down — try again in a bit."
+        )
         return
 
     prompt = strip_mention(msg.text or msg.caption or "")
@@ -412,7 +489,7 @@ async def handle_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Private DMs: don't allow writing to shared cohort learnings store.
     is_dm = update.effective_chat.type == "private"
 
-    _recent_queries.append(time.monotonic())
+    record_query(user.id)
     t0 = time.monotonic()
     error: str | None = None
     # Working memory only injected for cohort-group queries. DMs stay isolated.
@@ -452,19 +529,26 @@ async def handle_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     #    text if Telegram rejects the formatting (unbalanced markers, etc.).
     body = response[:4000]
 
-    async def _send(text: str) -> None:
+    async def _send(text: str):
         for mode in ("Markdown", None):
             try:
-                await placeholder.edit_text(text, parse_mode=mode)
-                return
+                return await placeholder.edit_text(text, parse_mode=mode)
             except Exception:
                 continue
         try:
-            await msg.reply_text(text, reply_to_message_id=msg.message_id)
+            return await msg.reply_text(text, reply_to_message_id=msg.message_id)
         except Exception:
             logger.exception("failed to send response")
+            return None
 
-    await _send(body)
+    sent = await _send(body)
+    # Persist TARS's own reply so it shows up in the digest and working memory.
+    # DM replies skipped — they must not leak into shared cohort stores.
+    if sent is not None and not is_dm:
+        try:
+            _persist_outbound(sent, body, reply_to_id=msg.message_id)
+        except Exception:
+            logger.exception("persist outbound failed")
 
 
 async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -496,6 +580,131 @@ async def cmd_health(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> Non
     if msg is None:
         return
     await msg.reply_text("ok")
+
+
+async def _is_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """True iff the asker is the cohort owner (Bayram).
+    Used to gate proactive-outbound publish commands."""
+    user = update.effective_user
+    chat = update.effective_chat
+    if user is None or chat is None or chat.type != "private":
+        return False
+    env = (os.environ.get("OWNER_TELEGRAM_USER_ID") or "").strip()
+    if env:
+        try:
+            return user.id == int(env)
+        except ValueError:
+            pass
+    # Fallback: ask Telegram who the cohort group's creator is.
+    try:
+        admins = await context.bot.get_chat_administrators(COHORT_GROUP_CHAT_ID)
+        for a in admins:
+            if getattr(a, "status", None) == "creator":
+                creator_id = getattr(getattr(a, "user", None), "id", 0)
+                return user.id == int(creator_id)
+    except Exception:
+        logger.exception("_is_owner: get_chat_administrators failed")
+    return False
+
+
+async def cmd_post_retro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only, DM-only: publishes the staged Sunday retro to the cohort group.
+
+    Workflow:
+    1. Sunday 09:00 PT, TARS DMs the owner with a generated draft.
+    2. Owner reviews. If they want to edit, they can rewrite /data/pending_retro.md
+       (via fly ssh) before calling /post_retro.
+    3. /post_retro publishes the on-disk draft to the cohort group.
+    """
+    msg = update.effective_message
+    if msg is None:
+        return
+    if not await _is_owner(update, context):
+        # Silent for non-owners — don't leak the existence of the command.
+        return
+    text = load_pending_retro()
+    if text is None:
+        await msg.reply_text(
+            "No fresh retro draft staged. Drafts auto-generate Sundays 09:00 PT "
+            "and expire after 24h."
+        )
+        return
+    body = text[:4000]
+    # Convert lite-markdown to Telegram HTML. See tg_format.py for rationale —
+    # legacy Markdown is too brittle for Cyrillic + URLs, has 400'd retros to
+    # the cohort group with literal asterisks showing.
+    html_body = markdown_to_telegram_html(body)
+    sent = None
+    last_err = None
+    try:
+        sent = await context.bot.send_message(
+            chat_id=COHORT_GROUP_CHAT_ID,
+            text=html_body,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception as exc:
+        last_err = exc
+        logger.warning("cmd_post_retro: HTML send failed; falling back to plain",
+                       exc_info=True)
+        try:
+            sent = await context.bot.send_message(
+                chat_id=COHORT_GROUP_CHAT_ID,
+                text=body,
+                disable_web_page_preview=True,
+            )
+        except Exception as exc2:
+            last_err = exc2
+    if sent is None:
+        await msg.reply_text(f"Publish failed: {last_err!r}")
+        return
+    # Persist outbound + archive + clear pending
+    try:
+        _persist_outbound(sent, body, reply_to_id=None)
+    except Exception:
+        logger.exception("cmd_post_retro: persist failed")
+    try:
+        archive_published_retro(text)
+    except Exception:
+        logger.exception("cmd_post_retro: archive failed")
+    await msg.reply_text(f"Posted to cohort group ({len(body)} chars). Archived.")
+
+
+async def cmd_skip_retro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only, DM-only: discards the staged Sunday retro draft."""
+    msg = update.effective_message
+    if msg is None:
+        return
+    if not await _is_owner(update, context):
+        return
+    if PENDING_RETRO_PATH.exists():
+        try:
+            PENDING_RETRO_PATH.unlink()
+            await msg.reply_text("Discarded.")
+        except Exception as exc:
+            await msg.reply_text(f"Failed to discard: {exc!r}")
+    else:
+        await msg.reply_text("No staged retro.")
+
+
+async def cmd_preview_retro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only, DM-only: regenerates the retro draft on demand and DMs it.
+    Useful for testing the pipeline outside the Sunday 9am window."""
+    msg = update.effective_message
+    if msg is None:
+        return
+    if not await _is_owner(update, context):
+        return
+    await msg.reply_text("Generating draft…")
+
+    class _FakeContext:
+        def __init__(self, bot):
+            self.bot = bot
+
+    try:
+        await run_weekly_retro_draft_job(_FakeContext(context.bot))
+    except Exception as exc:
+        await msg.reply_text(f"Draft job failed: {exc!r}")
 
 
 def extract_attachments(msg) -> list[str]:
@@ -622,6 +831,10 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("ping", cmd_health))
     app.add_handler(CommandHandler("ask", cmd_ask))
+    # Owner-only retro publish controls. Silent for non-owners (don't leak).
+    app.add_handler(CommandHandler("post_retro", cmd_post_retro))
+    app.add_handler(CommandHandler("skip_retro", cmd_skip_retro))
+    app.add_handler(CommandHandler("preview_retro", cmd_preview_retro))
     # Substring match on @<bot_username> instead of the entity-based
     # `filters.Mention()`. Telegram's server-side `mention` entity drops on
     # some edited / multi-paragraph messages, leaving the bot silent — past
@@ -678,10 +891,27 @@ def main() -> None:
             run_daily_job,
             time=dtime(hour=DIGEST_HOUR, minute=0, tzinfo=DIGEST_TIMEZONE),
             name="daily_digest",
+            job_kwargs={"misfire_grace_time": 300, "coalesce": True},
         )
         logger.info("daily digest scheduled for 23:00 America/Los_Angeles")
+        # Weekly retro DRAFT job — Sundays 09:00 PT. TARS does NOT autopost.
+        # It generates the retro, stages it to /data/pending_retro.md, and DMs
+        # the draft to the cohort owner for approval. Owner publishes via
+        # /post_retro (or discards via /skip_retro) — see cmd_post_retro below.
+        # Rule: any TARS-initiated outbound to the cohort needs explicit owner
+        # approval. Reactive replies (mentions/DMs) are exempt because the user
+        # triggered them.
+        app.job_queue.run_daily(
+            run_weekly_retro_draft_job,
+            time=dtime(hour=RETRO_DRAFT_HOUR, minute=0, tzinfo=DIGEST_TIMEZONE),
+            days=(RETRO_WEEKDAY,),  # Sunday only
+            name="weekly_retro_draft",
+            job_kwargs={"misfire_grace_time": 1800, "coalesce": True},
+        )
+        logger.info("weekly retro DRAFT scheduled for Sundays 09:00 America/Los_Angeles "
+                    "(owner approves via /post_retro)")
     else:
-        logger.warning("JobQueue unavailable — daily digest NOT scheduled")
+        logger.warning("JobQueue unavailable — daily digest + weekly retro NOT scheduled")
 
     if WEBHOOK_URL:
         logger.info("starting webhook on :%d -> %s", PORT, WEBHOOK_URL)

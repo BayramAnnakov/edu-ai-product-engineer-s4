@@ -73,12 +73,13 @@ lesson5/
 # Empty/private instructor folder
 instructor/
 
-# TARS memory seeds: 00-constitution.md is public (it IS TARS's
-# system prompt — students should be able to read it). The rest
-# (cohort roster, lesson designs, planted dossiers) is private.
-cohort-agent/memory_seeds/team/
-cohort-agent/memory_seeds/lessons/
-cohort-agent/memory_seeds/dossiers/
+# TARS memory seeds: DENY-BY-DEFAULT. Only the Constitution (TARS's
+# runtime system prompt) is public — everything else under
+# memory_seeds/ may contain student data, lesson designs, instructor-
+# only content, or verbatim chat quotes. New subdirs added later
+# (transcripts/, personas/, etc.) inherit this default automatically.
+cohort-agent/memory_seeds/*
+!cohort-agent/memory_seeds/00-constitution.md
 
 # Local TARS data
 cohort-agent/data/
