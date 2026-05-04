@@ -15,7 +15,8 @@ Telegram bot the cohort talks to. Anthropic Managed Agents (Opus 4.7 + memory st
 - `python memory_writer.py list --prefix /` — list every path TARS sees in cohort-knowledge.
 - `python memory_writer.py read /path/to/seed.md` — verify a seed actually loaded.
 - `python memory_writer.py write /path /local/file.md` — manual upload (bypasses the audience-boundary filter — prefer `provision.py`).
-- `python memory_writer.py delete /path` — remove from store.
+- `python memory_writer.py delete /path` — remove from store. Use to scrub a leaked instructor-only file; version history survives in the audit trail.
+- `python memory_writer.py history /path` — list version history for a memory (`memver_*` ids, operation, timestamp). 30-day retention per Anthropic docs unless exported.
 - `fly logs --app edu-aipe-s4-tars` — bot not replying → start here.
 - `fly ssh console --app edu-aipe-s4-tars` — for `/data/working_memory.db` inspection (sliding-window state).
 - `fly deploy` — push to prod. Never from a dirty branch; fly has no easy rollback below 24h.
@@ -24,7 +25,8 @@ Telegram bot the cohort talks to. Anthropic Managed Agents (Opus 4.7 + memory st
 
 - `provision.py` is the source of truth for what reaches students. Memory_writer.py is the manual escape hatch — use it for one-off scrubs, not bulk syncs.
 - `INSTRUCTOR_ONLY_PATTERNS` in `provision.py` filters `memory_seeds/` before upload. Patterns: `*-design.md`, `*-rubric.md`, `pre-class*`, `*tensions*`, `instructor/*`, `run-sheet*`, `handouts*`, `slide-deck-outline*`. **Anything else under `memory_seeds/` is visible to all 20 students.**
-- Two memory stores: `cohort-knowledge` (read-only seeds, `provision.py` writes) and `cohort-learnings` (TARS read-write scratchpad). The Constitution mounts them at distinct prefixes.
+- Two memory stores: `cohort-knowledge` (read-only at session-mount; `provision.py` / `digest.py` / `backfill.py` write via the orchestrator REST API) and `cohort-learnings` (read-write at session-mount; TARS writes to `/learnings/staged/` only). `build_resources()` in `telegram_bot.py` mounts both into every session — the Constitution describes the boundary, it does not enforce it. Privilege split is intentional: agent stays read-only on canonical content; orchestrator owns writes.
+- **Audience boundary is enforced in two places, with a deliberate division of labor.** `INSTRUCTOR_ONLY_PATTERNS` in `provision.py` filters at *upload time* — static path patterns (e.g. `*-design.md`, `deck/**`) never reach the store. The Constitution's audience-boundary clause filters at *reply time* — handles dynamic rules the upload filter can't (e.g. `dossiers/*` until the relevant session airs, `transcripts/*` from un-aired sessions). Don't try to merge the two lists; they enforce different things at different times.
 - `working_memory.py` uses SQLite with `journal_mode=WAL` on the `tars_data` fly volume mounted at `/data`. Required env: `TARS_DATA_DIR=/data` in prod. Don't write the DB anywhere else — non-volume paths vanish on fly restart. Schema: `working_memory.py:_init_schema` (`recent_messages` + `idx_recent_chat_ts`) — re-read before writing SQL.
 - Telegram filter for cohort group: `(filters.TEXT | filters.CAPTION) & filters.Chat(COHORT_GROUP_CHAT_ID) & ~filters.COMMAND`. DMs additionally allow `PHOTO | Document.IMAGE`. Narrowing the filter silently drops modalities to `_dm_unmatched` (no reply at all).
 - fly.io VM: `shared-cpu-1x`, 512MB. Hard concurrency 25, soft 20. Roughly 5 concurrent Anthropic streaming sessions before OOM — for >5 simultaneous turns, prefer `passive_log` ingestion over `query_tars`.

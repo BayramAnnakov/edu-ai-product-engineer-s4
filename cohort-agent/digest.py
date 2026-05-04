@@ -144,19 +144,26 @@ def write_digest(date_str: str, text: str) -> None:
     client = Anthropic()
     path = f"/digests/{date_str}.md"
 
-    # Resolve existing path → upsert
+    # Narrow the list to /digests/ to avoid scanning the whole store.
     page = client.beta.memory_stores.memories.list(
-        memory_store_id=KNOWLEDGE_STORE_ID, depth=10, order_by="path",
+        memory_store_id=KNOWLEDGE_STORE_ID,
+        path_prefix="/digests/", depth=10, order_by="path",
     )
     existing_id: str | None = None
+    existing_sha: str | None = None
     for m in (page.data if hasattr(page, "data") else page):
         if getattr(m, "path", "") == path:
             existing_id = getattr(m, "id", None)
+            existing_sha = getattr(m, "content_sha256", None)
             break
 
     if existing_id:
         client.beta.memory_stores.memories.update(
             memory_id=existing_id, memory_store_id=KNOWLEDGE_STORE_ID, content=text,
+            precondition=(
+                {"type": "content_sha256", "content_sha256": existing_sha}
+                if existing_sha else None
+            ),
         )
         logger.info("updated %s", path)
     else:
@@ -285,7 +292,8 @@ def _list_retro_input_digests(days: int = 7) -> list[tuple[str, str]]:
         return []
     client = Anthropic()
     page = client.beta.memory_stores.memories.list(
-        memory_store_id=KNOWLEDGE_STORE_ID, depth=10, order_by="path",
+        memory_store_id=KNOWLEDGE_STORE_ID,
+        path_prefix="/digests/", depth=10, order_by="path",
     )
     today_pt = datetime.now(RETRO_TIMEZONE).date()
     earliest = today_pt - timedelta(days=days)
@@ -293,7 +301,7 @@ def _list_retro_input_digests(days: int = 7) -> list[tuple[str, str]]:
     rows: list[tuple[str, str, date | None]] = []
     for m in items:
         path = getattr(m, "path", "")
-        if not path.startswith("/digests/") or not path.endswith(".md"):
+        if not path.endswith(".md"):
             continue
         stem = path[len("/digests/"):-len(".md")]
         if stem.startswith("retro-"):
@@ -348,13 +356,13 @@ def _list_answer_paths() -> list[str]:
     try:
         client = Anthropic()
         page = client.beta.memory_stores.memories.list(
-            memory_store_id=KNOWLEDGE_STORE_ID, depth=10, order_by="path",
+            memory_store_id=KNOWLEDGE_STORE_ID,
+            path_prefix="/answers/", depth=10, order_by="path",
         )
         items = page.data if hasattr(page, "data") else page
         return sorted(
             getattr(m, "path", "") for m in items
-            if getattr(m, "path", "").startswith("/answers/")
-            and getattr(m, "path", "").endswith(".md")
+            if getattr(m, "path", "").endswith(".md")
         )
     except Exception:
         logger.exception("_list_answer_paths failed")

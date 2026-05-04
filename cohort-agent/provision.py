@@ -119,11 +119,29 @@ def find_or_create_store(
 ) -> str:
     pinned = (os.environ.get(pinned_env) or "").strip()
     if pinned:
+        # Pinned store: still reconcile description in case it's drifted from
+        # what the agent should be told. The platform passes `description` into
+        # the agent's mount note — stale text there will mislead the model.
+        try:
+            current = client.beta.memory_stores.retrieve(pinned)
+            if getattr(current, "description", None) != description:
+                client.beta.memory_stores.update(pinned, description=description)
+                print(f"[memory] {name}: description updated")
+        except Exception as exc:
+            print(f"[memory] WARN could not sync description for {pinned}: {exc!r}",
+                  file=sys.stderr)
         print(f"[memory] using pinned {name}: {pinned}")
         return pinned
 
     for s in client.beta.memory_stores.list(limit=100):
         if getattr(s, "name", None) == name:
+            try:
+                if getattr(s, "description", None) != description:
+                    client.beta.memory_stores.update(s.id, description=description)
+                    print(f"[memory] {name}: description updated")
+            except Exception as exc:
+                print(f"[memory] WARN could not sync description for {s.id}: {exc!r}",
+                      file=sys.stderr)
             print(f"[memory] found existing {name!r}: {s.id} - pin via {pinned_env}")
             return s.id
 
@@ -147,6 +165,13 @@ INSTRUCTOR_ONLY_PATTERNS = (
     "**/run-sheet*",
     "**/handouts*",
     "**/slide-deck-outline*",
+    # Decks (`*-deck-outline.md`, plain `deck-outline.md`, or anything under a
+    # `deck/` dir) are instructor source-of-truth — talking points, transitions,
+    # block-5 forensics dossier hooks. Public artifacts ship from `lesson*/deck/`
+    # are gitignored; the runtime upload filter has to match.
+    "**/deck-outline*",
+    "**/*-deck-outline*",
+    "**/deck/**",
 )
 
 
@@ -196,8 +221,11 @@ def sync_to_store(
             if esha == sha:
                 skipped += 1
                 continue
+            # Optimistic concurrency: if someone else updated this memory
+            # between our list and update, fail loudly rather than clobber.
             client.beta.memory_stores.memories.update(
                 memory_id=mid, memory_store_id=store_id, content=content,
+                precondition={"type": "content_sha256", "content_sha256": esha},
             )
             print(f"[{label}] updated {path}")
             updated += 1
@@ -238,14 +266,19 @@ def main() -> int:
     env_id = provision_environment(client)
     knowledge_id = find_or_create_store(
         client, KNOWLEDGE_STORE_NAME,
-        "Curated cohort 4 knowledge: roster, lesson designs, dossiers, transcripts. "
-        "Read-only for the agent except /learnings/staged/.",
+        "Curated cohort 4 knowledge: roster, lessons, dossiers, transcripts, "
+        "answers, digests. Mounted read-only into the agent's session; the "
+        "orchestrator (provision.py / digest.py / backfill.py) is the only "
+        "writer. Path conventions: /team/, /lessons/<N>/, /dossiers/, "
+        "/transcripts/, /answers/, /digests/.",
         "COHORT_KNOWLEDGE_STORE_ID",
     )
     learnings_id = find_or_create_store(
         client, LEARNINGS_STORE_NAME,
-        "TARS's mutable scratchpad. Agent writes to /learnings/staged/ only; "
-        "Bayram promotes to /learnings/promoted/ periodically.",
+        "TARS's read-write scratchpad. The agent writes new insights to "
+        "/learnings/staged/<YYYY-MM-DD>-<topic>.md, one per file. Reviewed and "
+        "promoted to /learnings/promoted/ periodically by Bayram. Never write "
+        "outside /learnings/staged/.",
         "COHORT_LEARNINGS_STORE_ID",
     )
 

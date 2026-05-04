@@ -63,16 +63,23 @@ Format:
 
 def write_digest(client: Anthropic, store_id: str, path: str, content: str) -> None:
     page = client.beta.memory_stores.memories.list(
-        memory_store_id=store_id, depth=10, order_by="path",
+        memory_store_id=store_id,
+        path_prefix="/digests/", depth=10, order_by="path",
     )
     existing_id: str | None = None
+    existing_sha: str | None = None
     for m in (page.data if hasattr(page, "data") else page):
         if getattr(m, "path", "") == path:
             existing_id = getattr(m, "id", None)
+            existing_sha = getattr(m, "content_sha256", None)
             break
     if existing_id:
         client.beta.memory_stores.memories.update(
             memory_id=existing_id, memory_store_id=store_id, content=content,
+            precondition=(
+                {"type": "content_sha256", "content_sha256": existing_sha}
+                if existing_sha else None
+            ),
         )
         print(f"updated {path}")
     else:
