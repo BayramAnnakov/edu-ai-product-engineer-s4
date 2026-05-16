@@ -28,7 +28,8 @@ from anthropic import Anthropic
 from telegram import ReactionTypeEmoji, Update
 from telegram.constants import ChatAction
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters,
+    Application, ApplicationHandlerStop, CommandHandler, MessageHandler,
+    ContextTypes, filters,
 )
 
 from digest import (
@@ -867,28 +868,68 @@ async def _send_one_poll(
     )
 
 
+async def _is_owner_anywhere(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> bool:
+    """Like ``_is_owner`` but permits invocation from the cohort group too.
+
+    Use for owner commands where in-group use is a *feature* (e.g. ``/quiz``
+    from the group means "post polls to the chat I'm currently in"). The
+    strict DM-only ``_is_owner`` stays the gate for /post_retro and friends
+    where DM-confirmation matters."""
+    user = update.effective_user
+    chat = update.effective_chat
+    if user is None or chat is None:
+        return False
+    # Allow private chat with owner OR the canonical cohort group itself.
+    if chat.type != "private" and chat.id != COHORT_GROUP_CHAT_ID:
+        return False
+    env = (os.environ.get("OWNER_TELEGRAM_USER_ID") or "").strip()
+    if env:
+        try:
+            return user.id == int(env)
+        except ValueError:
+            pass
+    try:
+        admins = await context.bot.get_chat_administrators(COHORT_GROUP_CHAT_ID)
+        for a in admins:
+            if getattr(a, "status", None) == "creator":
+                creator_id = getattr(getattr(a, "user", None), "id", 0)
+                return user.id == int(creator_id)
+    except Exception:
+        logger.exception("_is_owner_anywhere: get_chat_administrators failed")
+    return False
+
+
 async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Owner-only: post a pre-defined quiz as a sequence of anonymous polls.
 
     Usage:
-      /quiz                          → list available quizzes
-      /quiz workshop1_retrieval      → post to THIS DM (test mode)
-      /quiz workshop1_retrieval --to-group  → post to cohort group (production)
+      /quiz                          → list available quizzes (replies in current chat)
+      /quiz workshop1_retrieval      → post polls to the chat where the command ran
+                                       (DM = test mode, cohort group = production)
+      /quiz workshop1_retrieval --to-group  → force-post to cohort group regardless
 
-    Silent for non-owners — don't leak the command's existence to students."""
+    Works in DM (owner) AND the cohort group (owner). Silent for non-owners.
+    Always raises ApplicationHandlerStop after handling so the same /quiz
+    message can't double-trigger ``handle_query`` via the mention filter."""
     msg = update.effective_message
     if msg is None:
         return
-    if not await _is_owner(update, context):
-        return
+    if not await _is_owner_anywhere(update, context):
+        # Silent for non-owners. Still consume so we don't fall through to
+        # handle_query, which would invoke the LLM on a /command — wasteful
+        # and produces "I don't have that command" hallucinations (the bug
+        # observed 2026-05-15 when /quiz in group reached the agent).
+        raise ApplicationHandlerStop
     args = context.args or []
     if not args:
         names = ", ".join(QUIZ_LIBRARY.keys())
         await msg.reply_text(
             f"Usage: /quiz <name> [--to-group]\nAvailable: {names}\n"
-            "Default target = this DM (test mode). Add --to-group to publish."
+            "Default target = this chat. Add --to-group to force-post to cohort."
         )
-        return
+        raise ApplicationHandlerStop
     name = args[0]
     to_group = "--to-group" in args[1:]
     questions = QUIZ_LIBRARY.get(name)
@@ -896,9 +937,9 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.reply_text(
             f"Unknown quiz: {name}. Available: {', '.join(QUIZ_LIBRARY.keys())}"
         )
-        return
+        raise ApplicationHandlerStop
     target = COHORT_GROUP_CHAT_ID if to_group else msg.chat_id
-    label = "cohort group" if to_group else "this DM"
+    label = ("cohort group" if target == COHORT_GROUP_CHAT_ID else "this DM")
     await msg.reply_text(
         f"Posting {len(questions)} anonymous quiz poll(s) to {label}…"
     )
@@ -918,36 +959,38 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as exc:
             logger.exception("cmd_quiz: send_poll failed at Q%d", i)
             await msg.reply_text(f"Q{i} failed: {exc!r}")
-            return
+            raise ApplicationHandlerStop
     await msg.reply_text(f"Posted {len(questions)}/{len(questions)} to {label}. Anonymous; bot sees aggregate counts only.")
+    raise ApplicationHandlerStop
 
 
 async def cmd_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Owner-only: ad-hoc anonymous quiz poll. Posts to wherever the command
-    came from (DM for testing, group if owner sends it there).
+    """Owner-only: ad-hoc anonymous quiz poll. Posts to the chat the command
+    ran in (DM for testing, cohort group for live use).
 
     Usage:
       /poll <question> | <opt1> | <opt2> | ... | correct=<index> [| explain=<text>]
 
     Example:
       /poll What blocks Edit/Write in our hook? | system prompt | PreToolUse deny | nothing | correct=1 | explain=Hooks are code, prompts are advisory.
-    """
+
+    Like /quiz, allowed from DM OR cohort group; always consumes the update."""
     msg = update.effective_message
     if msg is None:
         return
-    if not await _is_owner(update, context):
-        return
+    if not await _is_owner_anywhere(update, context):
+        raise ApplicationHandlerStop
     raw = (msg.text or "").split(maxsplit=1)
     if len(raw) < 2:
         await msg.reply_text(
             "Usage: /poll <question> | <opt1> | <opt2> | ... | correct=<index> [| explain=<text>]\n"
             "Posts an anonymous quiz poll to THIS chat."
         )
-        return
+        raise ApplicationHandlerStop
     parts = [p.strip() for p in raw[1].split("|")]
     if len(parts) < 4:
         await msg.reply_text("Need: question | opt1 | opt2 | correct=N (minimum 2 options + correct)")
-        return
+        raise ApplicationHandlerStop
     question = parts[0]
     correct_idx: int | None = None
     explanation: str | None = None
@@ -958,20 +1001,20 @@ async def cmd_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 correct_idx = int(p.split("=", 1)[1])
             except ValueError:
                 await msg.reply_text(f"Bad correct= value: {p!r}")
-                return
+                raise ApplicationHandlerStop
         elif p.lower().startswith("explain=") or p.lower().startswith("explanation="):
             explanation = p.split("=", 1)[1].strip()
         else:
             options.append(p)
     if len(options) < 2:
         await msg.reply_text(f"Need ≥ 2 options (got {len(options)}).")
-        return
+        raise ApplicationHandlerStop
     if correct_idx is None or correct_idx < 0 or correct_idx >= len(options):
         await msg.reply_text(
             f"correct= must be a 0-based index into options. "
             f"got correct={correct_idx}, options={len(options)}."
         )
-        return
+        raise ApplicationHandlerStop
     try:
         await _send_one_poll(
             context,
@@ -984,6 +1027,7 @@ async def cmd_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as exc:
         logger.exception("cmd_poll: send_poll failed")
         await msg.reply_text(f"send_poll failed: {exc!r}")
+    raise ApplicationHandlerStop
 
 
 async def cmd_preview_retro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
