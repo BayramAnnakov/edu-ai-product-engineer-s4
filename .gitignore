@@ -70,12 +70,13 @@ lesson4/
 lesson5/
 
 # Lesson 2 (workshop 2026-05-30): pre-aired ship of student-facing artifacts
-# only — starter templates + research canon. Instructor playbook (design,
-# run-sheet, handouts, dossiers, deck, staging, council) stays private per
-# the lesson*/<pattern> rules above. Matches lesson1's published footprint.
+# only — starter templates only. Instructor playbook (design, run-sheet,
+# handouts, dossiers, deck, staging, council) and internal research stay
+# private per the lesson*/<pattern> rules above. Matches lesson1's footprint.
 lesson2/.DS_Store
 lesson2/deck/diff-fixtures.md
 lesson2/deck/REVISION-BRIEF.md
+lesson2/research/
 
 # Empty/private instructor folder
 instructor/
