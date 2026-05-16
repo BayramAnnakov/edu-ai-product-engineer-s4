@@ -765,6 +765,227 @@ async def cmd_skip_retro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await msg.reply_text("No staged retro.")
 
 
+# ───────────────────────── owner-only quiz/poll publishing ─────────────────
+# Anonymous Telegram quiz polls. Per Telegram API: when is_anonymous=True,
+# the bot only sees aggregate Poll counts — no PollAnswer events with user_id.
+# Each student sees their own correctness inline (Telegram UI), instructor
+# sees how many got each option. Matches "auto-collected · auto-graded" on
+# slide 06 without exposing per-user answers.
+#
+# Workshop 2 retrieval quiz (slide 06). All 5 questions are answerable from
+# Workshop 1 alone (workshop1-notes-ru.md) — no new knowledge required.
+# Telegram limits: question ≤ 300 chars, each option ≤ 100 chars, max 10 options,
+# explanation ≤ 200 chars.
+
+QUIZ_WORKSHOP1_RETRIEVAL = [
+    {
+        "question": "S1 Q1 · What does Plan Mode prevent in Claude Code / Codex?",
+        "options": [
+            "The model from making up facts (hallucinations)",
+            "The model from writing/editing files until you approve the plan",
+            "The model from running Bash commands",
+            "The model from searching the web",
+        ],
+        "correct_option_id": 1,
+        "explanation": "Plan Mode adds a system instruction: 'do not edit files, describe a plan'. (S1 §5)",
+    },
+    {
+        "question": "S1 Q2 · Constitution vs CLAUDE.md / AGENTS.md — what's the real difference?",
+        "options": [
+            "They're the same thing — different names for one concept",
+            "Constitution = prod-agent system prompt; CLAUDE.md = coding-assistant prompt",
+            "Constitution is for humans; CLAUDE.md is for machines",
+            "CLAUDE.md is just a longer Constitution",
+        ],
+        "correct_option_id": 1,
+        "explanation": "Constitution is the agent's prod prompt (loaded once); CLAUDE.md is the coding assistant's prompt (loaded every turn). (S1 §6)",
+    },
+    {
+        "question": "S1 Q3 · Same prompt, same model — 10 different implementations. Why?",
+        "options": [
+            "The model's cache was cold and invalidated between calls",
+            "Each student used a different model version",
+            "LLM sampling is non-deterministic — same prompt yields different outputs",
+            "Claude Code automatically adds randomness to prevent plagiarism",
+        ],
+        "correct_option_id": 2,
+        "explanation": "Stochasticity demo: ~10 different opt-out implementations from one prompt. Variance is real; constraints close it. (S1 §4)",
+    },
+    {
+        "question": "S1 Q4 · The '100:1' metric for production AI agents — what does it tell you?",
+        "options": [
+            "Send 100 messages, expect 1 response — the model is slow",
+            "Output tokens should be 100× input tokens — more is better",
+            "Healthy ratio is ~100 input : 1 output. Close to 1:1 means too little context provided",
+            "100 tools, 1 model — the orchestration ratio",
+        ],
+        "correct_option_id": 2,
+        "explanation": "Empirical: prod agents see ~100:1 input-to-output tokens. Near 1:1 = under-investing in context. Directional, not strict. (S1 §3)",
+    },
+    {
+        "question": "S1 Q5 · Operator → Approver — what actually shifts?",
+        "options": [
+            "Developer goes from writing code to writing specs and reviewing results",
+            "Developer becomes the AI's manager (HR / admin role)",
+            "Operator and Approver are the same role — different terms",
+            "Approver is the AI; Operator is the human",
+        ],
+        "correct_option_id": 0,
+        "explanation": "S1 table: 'пишет код' → 'пишет спеку, ревьюит результат'. One person = N agents; testing becomes statistical. (S1 §2)",
+    },
+]
+
+QUIZ_LIBRARY = {
+    "workshop1_retrieval": QUIZ_WORKSHOP1_RETRIEVAL,
+}
+
+
+async def _send_one_poll(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    question: str,
+    options: list[str],
+    correct_option_id: int,
+    explanation: str | None,
+) -> None:
+    """Send a single anonymous quiz poll. Centralised so all paths share the
+    same anonymity / type / explanation policy.
+
+    `is_anonymous=True` is REQUIRED — per Telegram, only anonymous polls suppress
+    PollAnswer updates that would otherwise expose per-user choices.
+    """
+    # python-telegram-bot types correct_option_id as Literal[0..9]; cast for the
+    # generic int we accept at the boundary (Telegram's own cap is 10 options).
+    await context.bot.send_poll(
+        chat_id=chat_id,
+        question=question[:300],
+        options=[o[:100] for o in options],
+        is_anonymous=True,
+        type="quiz",
+        correct_option_id=correct_option_id,  # type: ignore[arg-type]
+        explanation=(explanation or "")[:200] or None,
+    )
+
+
+async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: post a pre-defined quiz as a sequence of anonymous polls.
+
+    Usage:
+      /quiz                          → list available quizzes
+      /quiz workshop1_retrieval      → post to THIS DM (test mode)
+      /quiz workshop1_retrieval --to-group  → post to cohort group (production)
+
+    Silent for non-owners — don't leak the command's existence to students."""
+    msg = update.effective_message
+    if msg is None:
+        return
+    if not await _is_owner(update, context):
+        return
+    args = context.args or []
+    if not args:
+        names = ", ".join(QUIZ_LIBRARY.keys())
+        await msg.reply_text(
+            f"Usage: /quiz <name> [--to-group]\nAvailable: {names}\n"
+            "Default target = this DM (test mode). Add --to-group to publish."
+        )
+        return
+    name = args[0]
+    to_group = "--to-group" in args[1:]
+    questions = QUIZ_LIBRARY.get(name)
+    if questions is None:
+        await msg.reply_text(
+            f"Unknown quiz: {name}. Available: {', '.join(QUIZ_LIBRARY.keys())}"
+        )
+        return
+    target = COHORT_GROUP_CHAT_ID if to_group else msg.chat_id
+    label = "cohort group" if to_group else "this DM"
+    await msg.reply_text(
+        f"Posting {len(questions)} anonymous quiz poll(s) to {label}…"
+    )
+    for i, q in enumerate(questions, start=1):
+        try:
+            await _send_one_poll(
+                context,
+                chat_id=target,
+                question=q["question"],
+                options=q["options"],
+                correct_option_id=q["correct_option_id"],
+                explanation=q.get("explanation"),
+            )
+            # Small gap so the channel doesn't render 5 polls in one chunk and
+            # so we stay well under Telegram's 30 msg/sec global rate ceiling.
+            await asyncio.sleep(1.0)
+        except Exception as exc:
+            logger.exception("cmd_quiz: send_poll failed at Q%d", i)
+            await msg.reply_text(f"Q{i} failed: {exc!r}")
+            return
+    await msg.reply_text(f"Posted {len(questions)}/{len(questions)} to {label}. Anonymous; bot sees aggregate counts only.")
+
+
+async def cmd_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: ad-hoc anonymous quiz poll. Posts to wherever the command
+    came from (DM for testing, group if owner sends it there).
+
+    Usage:
+      /poll <question> | <opt1> | <opt2> | ... | correct=<index> [| explain=<text>]
+
+    Example:
+      /poll What blocks Edit/Write in our hook? | system prompt | PreToolUse deny | nothing | correct=1 | explain=Hooks are code, prompts are advisory.
+    """
+    msg = update.effective_message
+    if msg is None:
+        return
+    if not await _is_owner(update, context):
+        return
+    raw = (msg.text or "").split(maxsplit=1)
+    if len(raw) < 2:
+        await msg.reply_text(
+            "Usage: /poll <question> | <opt1> | <opt2> | ... | correct=<index> [| explain=<text>]\n"
+            "Posts an anonymous quiz poll to THIS chat."
+        )
+        return
+    parts = [p.strip() for p in raw[1].split("|")]
+    if len(parts) < 4:
+        await msg.reply_text("Need: question | opt1 | opt2 | correct=N (minimum 2 options + correct)")
+        return
+    question = parts[0]
+    correct_idx: int | None = None
+    explanation: str | None = None
+    options: list[str] = []
+    for p in parts[1:]:
+        if p.startswith("correct="):
+            try:
+                correct_idx = int(p.split("=", 1)[1])
+            except ValueError:
+                await msg.reply_text(f"Bad correct= value: {p!r}")
+                return
+        elif p.lower().startswith("explain=") or p.lower().startswith("explanation="):
+            explanation = p.split("=", 1)[1].strip()
+        else:
+            options.append(p)
+    if len(options) < 2:
+        await msg.reply_text(f"Need ≥ 2 options (got {len(options)}).")
+        return
+    if correct_idx is None or correct_idx < 0 or correct_idx >= len(options):
+        await msg.reply_text(
+            f"correct= must be a 0-based index into options. "
+            f"got correct={correct_idx}, options={len(options)}."
+        )
+        return
+    try:
+        await _send_one_poll(
+            context,
+            chat_id=msg.chat_id,
+            question=question,
+            options=options,
+            correct_option_id=correct_idx,
+            explanation=explanation,
+        )
+    except Exception as exc:
+        logger.exception("cmd_poll: send_poll failed")
+        await msg.reply_text(f"send_poll failed: {exc!r}")
+
+
 async def cmd_preview_retro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Owner-only, DM-only: regenerates the retro draft on demand and DMs it.
     Useful for testing the pipeline outside the Sunday 9am window."""
@@ -923,6 +1144,12 @@ def main() -> None:
     app.add_handler(CommandHandler("post_retro", cmd_post_retro))
     app.add_handler(CommandHandler("skip_retro", cmd_skip_retro))
     app.add_handler(CommandHandler("preview_retro", cmd_preview_retro))
+    # Owner-only anonymous quiz polls. /quiz posts a pre-defined batch
+    # (Workshop 2 retrieval quiz lives in QUIZ_LIBRARY); /poll is ad-hoc.
+    # Default target = sender's chat (DM for testing). --to-group publishes
+    # to the cohort group.
+    app.add_handler(CommandHandler("quiz", cmd_quiz))
+    app.add_handler(CommandHandler("poll", cmd_poll))
     # Substring match on @<bot_username> instead of the entity-based
     # `filters.Mention()`. Telegram's server-side `mention` entity drops on
     # some edited / multi-paragraph messages, leaving the bot silent — past
