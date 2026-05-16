@@ -28,7 +28,7 @@ The CLI variants give the same guarantee via config files. The SDK variants give
 | | Claude Code | Codex CLI | Claude Agent SDK (Py) | Codex SDK (Node) | Cursor | TARS (Managed Agents) |
 |---|---|---|---|---|---|---|
 | Hook config | `~/.claude/settings.json` | `~/.codex/hooks.json` (top-level `hooks` key required) | `ClaudeAgentOptions(hooks={...})` | `.codex/hooks.json` (read by spawned CLI) | ❌ | ❌ |
-| Skill discovery | `.claude/skills/<name>/SKILL.md` | `.codex/skills/<name>/SKILL.md` | `setting_sources=["project"]` auto-discovers | Spawned CLI auto-discovers `.codex/skills/` | ⚠️ partial | Skills API (uploaded separately) |
+| Skill discovery | `.claude/skills/<name>/SKILL.md` | `.codex/skills/<name>/SKILL.md` | `setting_sources=["project"]` auto-discovers | Spawned CLI auto-discovers `.codex/skills/` | `.cursor/skills/<name>/SKILL.md` (also auto-loads `.claude/` + `.codex/`) | Skills API (uploaded separately) |
 | Write tool name | `Edit \| Write \| NotebookEdit` | `apply_patch` | same as Claude Code | same as Codex CLI | — | — |
 | Trust gate | none (just merge into settings.json) | `~/.codex/config.toml` `trust_level = "trusted"` | none | inherits Codex CLI trust gate | — | — |
 

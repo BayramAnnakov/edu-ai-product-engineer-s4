@@ -21,13 +21,41 @@ A minimal `SKILL.md` + `reference.md` pair demonstrating the cross-runtime Agent
 
 | | Claude Code | Codex CLI | Cursor | TARS (Managed Agents) |
 |---|---|---|---|---|
-| This template | ✅ as-is | ✅ as-is | ⚠️ partial | ✅ via Skills API upload |
+| This template | ✅ as-is | ✅ as-is | ✅ as-is | ✅ via Skills API upload |
 
-The SKILL.md format is the cross-runtime standard. The same file works in all four locations (with minor wrapper differences for Managed Agents).
+The SKILL.md format is the cross-runtime standard. The same file works in all four locations (with minor wrapper differences for Managed Agents). Cursor convention is `.cursor/skills/<name>/SKILL.md`, but Cursor also auto-loads `.claude/skills/` and `.codex/skills/` for compatibility — see https://cursor.com/docs/skills.
 
 ## Why this matters for Workshop 2
 
-Skill = **read-side** of the deterministic read-only colleague Bayram promised in S1 (msg 38-40, 2026-05-02). The hook (see `starter-hook-template/`) is the **write-side** guard. Together they implement the harness Bayram named.
+Mapping Bayram's S1 promise (msg 38-40, 2026-05-02) onto S2 primitives:
+
+| S1 option | What he said | S2 primitive |
+|---|---|---|
+| (1) Subagent with read perms | run main agent or subagent with read only | not covered in S2 |
+| (2) **Tool that programmatically controls read-only** | *"мы поговорим про это на 2й встрече"* | **Skill** — see below |
+| (3) **Harness that slaps writes** | *"3-4 встреча"* | **Hook** (PreToolUse deny, see `starter-hook-template/`) |
+
+**How a Skill fulfills option (2) — structurally, not just by convention:**
+
+In Claude Code, a SKILL.md can declare `context: fork` + `agent: Explore` in its frontmatter. The skill then runs in a *forked subagent* whose tool list is intrinsically read-only (`Read`, `Grep`, `Glob`, `LSP` — no `Edit` / `Write` / `NotebookEdit`). The model physically cannot write while in that skill, because those tools don't exist in its toolset. See https://code.claude.com/docs/en/skills (search "context: fork" — the `deep-research` example).
+
+```yaml
+---
+name: my-read-only-task
+description: ...
+context: fork
+agent: Explore
+---
+
+# This skill cannot write to disk. The forked Explore subagent
+# has Read/Grep/Glob/LSP only — no Edit/Write/NotebookEdit.
+```
+
+This is the canonical Claude Code mechanism for *programmatically-controlled read-only access* — exactly what Bayram named in option (2). Combined with the hook (option 3), you get the **deterministic read-only colleague** he promised.
+
+Codex Skills currently expose only `name` + `description` in their frontmatter — no equivalent fork-to-restricted-subagent mechanism documented yet. For a structurally read-only colleague on Codex, you can still combine a skill with a PreToolUse deny on `apply_patch` — see `starter-hook-template/`.
+
+**Important nuance about `allowed-tools`:** Claude Code's `allowed-tools` SKILL.md frontmatter is for **permission pre-approval** (skip the prompt for listed tools), NOT restriction — every other tool is still callable. To actually restrict, use `context: fork + agent: Explore` as above, OR add deny rules to your project's permission settings.
 
 ## Reading
 
