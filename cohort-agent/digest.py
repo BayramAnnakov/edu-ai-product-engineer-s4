@@ -174,20 +174,22 @@ def write_digest(date_str: str, text: str) -> None:
 
 
 async def run_daily_job(_context) -> None:
-    """JobQueue callback. Digests yesterday (UTC) since the job fires at 23:00 PT
-    which is ~07:00 UTC the next day; we want the closing day's log."""
-    yesterday = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    # Note: at 23:00 PT (07:00 UTC), today's UTC date *is* the just-ended PT day.
-    # If we want the calendar day that just closed in PT, this is correct.
+    """JobQueue callback. Digests the PT calendar day that's just closing.
+
+    Job fires at 23:00 PT. We read messages-<today-PT>.jsonl which now contains
+    a full PT day's worth of records (passive_log was switched to bucket by PT
+    date for exactly this — see prior incident note in 2026-05-11).
+    """
+    today_pt = datetime.now(RETRO_TIMEZONE).strftime("%Y-%m-%d")
     try:
-        text = digest_for(yesterday)
+        text = digest_for(today_pt)
         if text:
-            write_digest(yesterday, text)
-            logger.info("digest written for %s", yesterday)
+            write_digest(today_pt, text)
+            logger.info("digest written for %s", today_pt)
         else:
-            logger.info("no messages for %s, skipping digest", yesterday)
+            logger.info("no messages for %s, skipping digest", today_pt)
     except Exception:
-        logger.exception("digest job failed for %s", yesterday)
+        logger.exception("digest job failed for %s", today_pt)
 
 
 # --- Weekly retrospective -------------------------------------------------
@@ -267,14 +269,66 @@ as a non-existent command. Use natural phrases ("спросите меня пр�
 marks. No "great week / amazing progress / kudos to everyone." No AI clichés.
 - Match the dominant language of the past week's digests (mostly Russian for cohort 4).
 - ≤ 600 words total. Single Telegram message.
-- Name students by first_name when surfacing their questions. NEVER grade, rank, \
-or compare students. NEVER speculate about a student's progress.
+- Name students by first_name ONLY. NEVER a full name (use just "Firstname"; \
+disambiguate two same-first-names with an initial like "Firstname L." — never \
+the full surname). NEVER grade, rank, or compare students. NEVER speculate \
+about a student's progress.
 - NEVER append the persona signoff ("TARS — cohort 4 retrieval agent..."). The retro \
 stands on its own.
 - If <2 days of digest content, produce a SHORTER post. Don't pad. Honesty about \
 thin weeks is fine.
 - If no content at all, return the literal string SKIP and nothing else.
+
+# RECENCY & ANTI-REPUBLISH (read before drafting)
+
+The input set has been filtered to exclude any digest already published in a prior \
+retro — assume nothing you see has been broadcast before. Despite that:
+
+- PRIORITIZE the last 3 days of digests over older ones. The cohort already lived \
+through the older days; the retro's job is to surface what's fresh, not to recap.
+- If a "question" was discussed and answered IN THE SAME WEEK (same input set, \
+same digest day or adjacent), it's resolved — frame it as "обсудили" in \
+*Что обсуждали*, NOT as an *Открытый вопрос*. *Открытые вопросы* must be \
+genuinely open: asked, unanswered, and pointing forward.
+- If every question in the input got a Bayram answer in-chat AND links to a \
+canonical /answers/ topic, the cohort doesn't need an "Открытые вопросы" section \
+at all — omit it. A 3-section retro (Главное / Что обсуждали / Впереди) is fine.
+- For a genuinely quiet week (≤1 daily digest with content), DO NOT manufacture \
+open questions. Default to: short *Главное* + omit *Открытые вопросы* + brief \
+*Впереди*. Mention the one prompt students should act on (e.g. "соберите v0 \
+Constitution к S2"), nothing else.
 """
+
+
+def _last_retro_date() -> date | None:
+    """Date of the most recently archived retro (`/digests/retro-YYYY-MM-DD.md`).
+
+    Used to exclude digests already covered by a prior retro so questions don't
+    get republished week after week. None if no retro has ever been archived.
+    """
+    if not KNOWLEDGE_STORE_ID:
+        return None
+    try:
+        client = Anthropic()
+        page = client.beta.memory_stores.memories.list(
+            memory_store_id=KNOWLEDGE_STORE_ID,
+            path_prefix="/digests/retro-", depth=10, order_by="path",
+        )
+        items = page.data if hasattr(page, "data") else page
+        dates: list[date] = []
+        for m in items:
+            path = getattr(m, "path", "")
+            stem = path[len("/digests/"):-len(".md")] if path.endswith(".md") else ""
+            if not stem.startswith("retro-"):
+                continue
+            try:
+                dates.append(date.fromisoformat(stem[len("retro-"):]))
+            except ValueError:
+                continue
+        return max(dates) if dates else None
+    except Exception:
+        logger.exception("_last_retro_date failed")
+        return None
 
 
 def _list_retro_input_digests(days: int = 7) -> list[tuple[str, str]]:
@@ -284,7 +338,11 @@ def _list_retro_input_digests(days: int = 7) -> list[tuple[str, str]]:
       - daily digests        /digests/YYYY-MM-DD.md           (date-windowed)
       - workshop supplements /digests/YYYY-MM-DD-supplement.md (date-windowed)
       - manual backfills     /digests/backfill-*.md           (always — they're rare)
-    Excludes /digests/retro-*.md to prevent the retro from feeding on its own past output.
+    Excludes:
+      - /digests/retro-*.md  (don't feed retros to retros)
+      - anything whose date is on or before the most recent archived retro
+        (those questions were already published last week; rebroadcasting them
+        is what produced the stale 2026-05-09 draft).
 
     Sorted oldest first when a date is recoverable from the stem; undated entries last.
     """
@@ -297,6 +355,7 @@ def _list_retro_input_digests(days: int = 7) -> list[tuple[str, str]]:
     )
     today_pt = datetime.now(RETRO_TIMEZONE).date()
     earliest = today_pt - timedelta(days=days)
+    last_retro = _last_retro_date()
     items = page.data if hasattr(page, "data") else page
     rows: list[tuple[str, str, date | None]] = []
     for m in items:
@@ -315,6 +374,14 @@ def _list_retro_input_digests(days: int = 7) -> list[tuple[str, str]]:
         # If we have a date prefix, apply the window. Backfills (no date prefix)
         # are always included — they're meant to be read alongside recent content.
         if sort_date is not None and (sort_date < earliest or sort_date > today_pt):
+            continue
+        # Skip content already published in a prior retro. Without this, last
+        # week's workshop digest + supplement kept dominating the input set and
+        # the retro re-aired the same recurring questions week after week.
+        # Strict less-than: the prior retro fires at 09:00 PT, daily digests
+        # fire at 23:00 PT, so a daily digest dated == last_retro contains chat
+        # that happened AFTER the prior retro and should still be included.
+        if sort_date is not None and last_retro and sort_date < last_retro:
             continue
         mid = getattr(m, "id", None)
         if not mid:
@@ -573,13 +640,13 @@ def main() -> int:
     )
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--today", action="store_true", help="digest today (UTC)")
-    g.add_argument("--date", help="digest a specific date YYYY-MM-DD")
+    g.add_argument("--today", action="store_true", help="digest today (PT)")
+    g.add_argument("--date", help="digest a specific date YYYY-MM-DD (PT)")
     ap.add_argument("--dry-run", action="store_true",
                     help="generate but don't upload to memory store")
     args = ap.parse_args()
 
-    date_str = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_str = args.date or datetime.now(RETRO_TIMEZONE).strftime("%Y-%m-%d")
 
     text = digest_for(date_str)
     if not text:

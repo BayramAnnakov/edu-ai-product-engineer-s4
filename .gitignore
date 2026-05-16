@@ -86,3 +86,12 @@ cohort-agent/data/
 /tmp/
 cohort-4-design.md
 
+# Local dev byproducts (never publish)
+.playwright-mcp/
+cohort-agent/preview.html
+cohort-agent/tars-preview.png
+workspace/
+
+# Per-machine Claude Code local settings (may contain local tool perms)
+**/.claude/settings.local.json
+

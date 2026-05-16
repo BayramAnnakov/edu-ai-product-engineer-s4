@@ -105,6 +105,44 @@ def record_query(user_id: int) -> None:
     q.append(time.monotonic())
 
 
+# --- Opt-out -------------------------------------------------------------
+# Constitution v0.2 promises students can /optout in DM and we stop logging
+# their messages + excluding from digest. The orchestrator (this file) owns
+# the exclusion; the agent only acknowledges in voice. Without this filter
+# the verbal acknowledgement would be a lie.
+OPTOUTS_PATH = DATA_DIR / "optouts.json"
+_optouts_cache: tuple[set[int], float] | None = None
+
+
+def _load_optouts() -> set[int]:
+    """Return the set of user_ids that have opted out. mtime-cached."""
+    global _optouts_cache
+    try:
+        st = OPTOUTS_PATH.stat()
+    except FileNotFoundError:
+        return set()
+    if _optouts_cache is not None and _optouts_cache[1] == st.st_mtime:
+        return _optouts_cache[0]
+    try:
+        data = json.loads(OPTOUTS_PATH.read_text(encoding="utf-8"))
+        ids = {int(x) for x in data.get("user_ids", [])}
+    except Exception:
+        logger.exception("_load_optouts failed")
+        return set()
+    _optouts_cache = (ids, st.st_mtime)
+    return ids
+
+
+def _write_optouts(ids: set[int]) -> None:
+    global _optouts_cache
+    DATA_DIR.mkdir(exist_ok=True, parents=True)
+    payload = {"user_ids": sorted(ids)}
+    OPTOUTS_PATH.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+    )
+    _optouts_cache = None  # force reload on next read
+
+
 def build_resources() -> list[dict]:
     resources: list[dict] = []
     if KNOWLEDGE_ID:
@@ -348,7 +386,10 @@ def _persist_outbound(sent_msg, body: str, *, reply_to_id: int | None) -> None:
     }
     try:
         DATA_DIR.mkdir(exist_ok=True, parents=True)
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # Bucket by PT date, not UTC. Why: daily digests fire at 23:00 PT and
+        # we want each digest to summarize one PT calendar day. UTC bucketing
+        # split every PT day across two files, half of which was never read.
+        date_str = datetime.now(DIGEST_TIMEZONE).strftime("%Y-%m-%d")
         path = DATA_DIR / f"messages-{date_str}.jsonl"
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -582,6 +623,43 @@ async def cmd_health(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> Non
     await msg.reply_text("ok")
 
 
+async def cmd_optout(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
+    """DM-only: mark the sender as opted out of digest/working-memory writes.
+
+    Silently ignored in group chats — we never confirm opt-out status in front
+    of other students (Constitution §"Opt-out": do not reveal who opted out).
+    """
+    msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if msg is None or user is None or chat is None or chat.type != "private":
+        return
+    ids = _load_optouts()
+    if user.id not in ids:
+        ids.add(user.id)
+        _write_optouts(ids)
+    await msg.reply_text(
+        "You're opted out — I won't include your messages in the digest or "
+        "learn from them. Send /optin in DM to reverse."
+    )
+
+
+async def cmd_optin(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
+    """DM-only: reverse a prior /optout."""
+    msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if msg is None or user is None or chat is None or chat.type != "private":
+        return
+    ids = _load_optouts()
+    if user.id in ids:
+        ids.discard(user.id)
+        _write_optouts(ids)
+        await msg.reply_text("You're back in — your messages will be logged again.")
+    else:
+        await msg.reply_text("You weren't opted out.")
+
+
 async def _is_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """True iff the asker is the cohort owner (Bayram).
     Used to gate proactive-outbound publish commands."""
@@ -757,6 +835,11 @@ async def passive_log(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if user.is_bot:
         return
+    if user.id in _load_optouts():
+        # Honor the Constitution's opt-out promise: no JSONL, no working
+        # memory, no digest inclusion. The student remains free to ask
+        # questions in the group; we just don't *record* them.
+        return
     text = msg.text or msg.caption or ""
     attachments = extract_attachments(msg)
     if not text and not attachments:
@@ -779,7 +862,9 @@ async def passive_log(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> No
             ),
         }
         DATA_DIR.mkdir(exist_ok=True, parents=True)
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # PT date — see comment in _persist_outbound. The daily digest reads
+        # this file by PT date at firing time so the contents cover one PT day.
+        date_str = datetime.now(DIGEST_TIMEZONE).strftime("%Y-%m-%d")
         path = DATA_DIR / f"messages-{date_str}.jsonl"
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -831,6 +916,9 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("ping", cmd_health))
     app.add_handler(CommandHandler("ask", cmd_ask))
+    # Opt-out is DM-only (handler enforces); in groups the command is silent.
+    app.add_handler(CommandHandler("optout", cmd_optout))
+    app.add_handler(CommandHandler("optin", cmd_optin))
     # Owner-only retro publish controls. Silent for non-owners (don't leak).
     app.add_handler(CommandHandler("post_retro", cmd_post_retro))
     app.add_handler(CommandHandler("skip_retro", cmd_skip_retro))
