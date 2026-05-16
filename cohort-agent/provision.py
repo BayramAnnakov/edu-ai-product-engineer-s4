@@ -46,8 +46,29 @@ def load_system_prompt() -> str:
     return CONSTITUTION_PATH.read_text(encoding="utf-8").strip()
 
 
+def _attached_skills() -> list[dict]:
+    """Skills attached to the agent at provision time.
+
+    Each skill is uploaded separately via `scripts.upload_skill` and pinned
+    via a COHORT_*_SKILL_ID env var so this module stays declarative. To
+    attach a new skill: upload it once, set the env var (or fly secret),
+    re-run provision.
+
+    Pattern from onsa-robin/agent_managed/provision.py (verified working).
+    """
+    skills: list[dict] = []
+    for env_var in (
+        "COHORT_SEARCH_SKILL_ID",
+        "COHORT_DOSSIER_CREATOR_SKILL_ID",
+    ):
+        sid = (os.environ.get(env_var) or "").strip()
+        if sid:
+            skills.append({"type": "custom", "skill_id": sid, "version": "latest"})
+    return skills
+
+
 def compose_agent_body() -> dict:
-    return {
+    body: dict = {
         "name": AGENT_NAME,
         "model": MODEL,
         "system": load_system_prompt(),
@@ -55,6 +76,10 @@ def compose_agent_body() -> dict:
             {"type": "agent_toolset_20260401"},
         ],
     }
+    skills = _attached_skills()
+    if skills:
+        body["skills"] = skills
+    return body
 
 
 def latest_version(client: Anthropic, agent_id: str) -> int:
@@ -285,6 +310,17 @@ def main() -> int:
     sync_to_store(client, knowledge_id, "knowledge", collect_knowledge_seeds())
     seed_learnings_skeleton(client, learnings_id)
 
+    attached = _attached_skills()
+    if attached:
+        print()
+        print(f"[skills] attached {len(attached)} skill(s) to agent body:")
+        for s in attached:
+            print(f"  - {s['skill_id']} ({s['version']})")
+    else:
+        print()
+        print("[skills] none attached (set COHORT_*_SKILL_ID env vars after "
+              "running scripts/upload_skill.py to attach)")
+
     print()
     print("=" * 60)
     print("Set these as Fly secrets:")
@@ -294,6 +330,12 @@ def main() -> int:
     print(f"      COHORT_ENVIRONMENT_ID={env_id} \\")
     print(f"      COHORT_KNOWLEDGE_STORE_ID={knowledge_id} \\")
     print(f"      COHORT_LEARNINGS_STORE_ID={learnings_id}")
+    if attached:
+        print("  # plus, already set:")
+        for env_var in ("COHORT_SEARCH_SKILL_ID", "COHORT_DOSSIER_CREATOR_SKILL_ID"):
+            val = os.environ.get(env_var)
+            if val:
+                print(f"  #   {env_var}={val}")
     print("=" * 60)
     return 0
 
