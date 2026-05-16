@@ -1,0 +1,33 @@
+{
+  "_comment_1": "Codex CLI hooks config. The SDK wraps the CLI, which reads this file from cwd. Both surfaces honor it.",
+  "_comment_2": "Codex's unified write/edit tool is apply_patch. PreToolUse on apply_patch + permissionDecision: deny is the deterministic read-only guard.",
+  "_comment_3": "IMPORTANT: project-local hooks only load when the project's .codex/ layer is TRUSTED. Run `codex trust` once in this directory (or use --trust-project) before the hooks fire.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./hooks/readonly-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Read-only guard: checking..."
+          }
+        ]
+      }
+    ],
+
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./hooks/capture-failure.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

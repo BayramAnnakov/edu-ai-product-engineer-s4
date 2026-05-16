@@ -1,0 +1,16 @@
+{
+  "name": "starter-colleague-codex-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Workshop 2 starter: programmatic Codex SDK colleague with skill + PreToolUse hook (deterministic read-only guard on apply_patch).",
+  "scripts": {
+    "start": "node colleague.mjs",
+    "ask": "node colleague.mjs"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "^0.125.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

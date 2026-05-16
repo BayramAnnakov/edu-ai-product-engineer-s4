@@ -1,0 +1,5 @@
+venv/
+__pycache__/
+*.pyc
+.env
+# DO ship .claude/ — that's the skill + (eventually) settings.json

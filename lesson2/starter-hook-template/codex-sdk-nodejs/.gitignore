@@ -1,0 +1,3 @@
+node_modules/
+.env
+# DO ship .codex/ — that's the hook config + skill + scripts

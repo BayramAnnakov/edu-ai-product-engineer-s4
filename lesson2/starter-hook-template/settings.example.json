@@ -1,0 +1,32 @@
+{
+  "_comment_1": "Example Claude Code settings.json with both hooks installed. MERGE into your own ~/.claude/settings.json or .claude/settings.json — don't replace the file.",
+  "_comment_2": "Tool name mapping: Claude Code's write-class tools are Edit, Write, NotebookEdit. Codex CLI's unified write tool is apply_patch.",
+  "_comment_3": "For Codex CLI: move the 'hooks' key into ~/.codex/hooks.json instead, and change the matcher to 'apply_patch'.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/readonly-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Read-only guard: checking..."
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/capture-failure.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
